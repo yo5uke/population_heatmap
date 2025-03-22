@@ -324,7 +324,7 @@ observe({
       
     } else if (input$valueType == "人口") {
       
-      breaks <- c(0, 10000, 50000, 100000, 300000, 500000, 1000000, 2000000, 3000000)
+      breaks <- c(0, 10000, 50000, 100000, 200000, 300000, 500000, 750000, 1000000, 2000000, 3000000)
       pal <- colorBin("YlOrRd", domain = df_year$val, bins = breaks)
       
     }
@@ -351,7 +351,7 @@ observe({
           paste0(df_year$name_muni, "<br>", input$year, "年国勢調査", 
                "<br>", "データが欠損しています。"), 
           paste0(df_year$name_muni, "<br>", input$year, "年国勢調査", 
-               "<br>", df_year$val, "人")
+               "<br>", format(df_year$val, big.mark = ","), "人")
         ), 
       
       input$valueType == "人口割合" ~ 
