@@ -30,7 +30,9 @@ br()
 helpText(
   "市町村ごとの人口や年齢別人口とその割合、人口の増加率を国勢調査ベースで可視化しています。", 
   br(), 
-  "以下のドロップダウンメニューから表示したい指標と年を選択してください。"
+  "以下のドロップダウンメニューから表示したい指標と年を選択してください。", 
+  br(), 
+  "データが反映されるまで少し時間がかかる場合がありますが、少々お待ちください。"
 )
 
 br()
@@ -40,19 +42,22 @@ selectInput("valueType", "値の種類",
             selected = "人口")
 
 selectInput("ageCategory", "年齢区分", 
-            choices = c("総人口", "15歳未満人口", "15歳～64歳人口", "65歳以上人口"),
+            choices = c("総人口", "15歳未満人口", "15歳～64歳人口", "65歳以上人口"), 
             selected = "総人口")
 
-sliderTextInput("year", "表示する年",
-                choices = seq(1980, 2020, by = 5),
-                selected = 2020,
+sliderTextInput("year", "表示する年", 
+                choices = seq(1980, 2020, by = 5), 
+                selected = 2020, 
                 grid = TRUE)
 
 br()
 
-actionButton("show_help", "🛈 用語説明を見る")
-br()
-actionButton("show_source", "📦 データ出典等")
+div(
+  style = "text-align: center;", 
+  actionButton("show_help", "🛈 用語説明を見る"), 
+  br(), br(), 
+  actionButton("show_source", "📦 データ出典等")
+)
 ```
 
 # プロット
@@ -77,8 +82,8 @@ observeEvent(input$show_help, {
           ※ 正の値：増加、負の値：減少
         </li>
       </ul>
-    "),
-    easyClose = TRUE,
+    "), 
+    easyClose = TRUE, 
     footer = modalButton("閉じる"), 
     size = "l"
   ))
@@ -86,7 +91,7 @@ observeEvent(input$show_help, {
 
 observeEvent(input$show_source, {
   showModal(modalDialog(
-    title = "📦 データ出典・ライセンス・ソースコード",
+    title = "📦 データ出典・ライセンス・ソースコード", 
     HTML("
       <div style='line-height: 1.6; font-size: 95%;'>
         <h4>📊 データ出典</h4>
@@ -121,9 +126,9 @@ observeEvent(input$show_source, {
           </a>
         </p>
       </div>
-    "),
-    easyClose = TRUE,
-    footer = modalButton("閉じる"),
+    "), 
+    easyClose = TRUE, 
+    footer = modalButton("閉じる"), 
     size = "l"
   ))
 })
@@ -132,55 +137,61 @@ observeEvent(input$show_source, {
 observe({
   if (input$valueType == "人口") {
     updateSelectInput(session, "ageCategory", 
-                      choices = c("総人口", "15歳未満人口", "15～64歳人口", "65歳以上人口"),
+                      choices = c("総人口", "15歳未満人口", "15～64歳人口", "65歳以上人口"), 
                       selected = "総人口")
   } else if (input$valueType == "人口割合") {
     updateSelectInput(session, "ageCategory", 
-                      choices = c("15歳未満人口割合", "15～64歳人口割合", "65歳以上人口割合"),
+                      choices = c("15歳未満人口割合", "15～64歳人口割合", "65歳以上人口割合"), 
                       selected = "15歳未満人口割合")
   } else if (input$valueType == "人口増加率") {
     updateSelectInput(session, "ageCategory", 
-                      choices = c("人口増加率", "15歳未満人口増加率", "15～64歳人口増加率", "65歳以上人口増加率"),
+                      choices = c("人口増加率", "15歳未満人口増加率", "15～64歳人口増加率", "65歳以上人口増加率"), 
                       selected = "人口増加率")
   }
 })
 
 # ---- スライダーのアップデート ----
-observe({
+observeEvent(input$valueType, {
   if (input$valueType == "人口増加率") {
-    updateSliderTextInput(session, "year",
-                          choices = seq(1985, 2020, 5),
-                          selected = max(1985, input$year))
+    updateSliderTextInput(
+      session, 
+      "year", 
+      choices = seq(1985, 2020, 5), 
+      selected = if (input$year %in% seq(1985, 2020, 5)) input$year else 1985
+    )
   } else {
-    # 人口増加率から他へ移った際に再度1980年を表示する
-    updateSliderTextInput(session, "year",
-                          choices = seq(1980, 2020, 5),
-                          selected = input$year)
+    updateSliderTextInput(
+      session, 
+      "year", 
+      choices = seq(1980, 2020, 5), 
+      selected = if (input$year %in% seq(1980, 2020, 5)) input$year else 1980
+    )
   }
 })
+
 
 # ---- タイプごとに変数を抽出 ----
 selected_col <- reactive({
   if (input$valueType == "人口") {
     abs_map <- c(
-      "総人口"             = "population",
-      "15歳未満人口"       = "pop_u15",
-      "15～64歳人口"       = "pop_15to64",
-      "65歳以上人口"       = "pop_o65"
+      "総人口"       = "population", 
+      "15歳未満人口" = "pop_u15", 
+      "15～64歳人口" = "pop_15to64", 
+      "65歳以上人口" = "pop_o65"
     )
     abs_map[input$ageCategory]
   } else if (input$valueType == "人口割合") {
     ratio_map <- c(
-      "15歳未満人口割合" = "pct_u15",
-      "15～64歳人口割合" = "pct_15to64",
+      "15歳未満人口割合" = "pct_u15", 
+      "15～64歳人口割合" = "pct_15to64", 
       "65歳以上人口割合" = "pct_o65"
     )
     ratio_map[input$ageCategory]
   } else if (input$valueType == "人口増加率") {
     inc_map <- c(
-      "人口増加率"         = "pct_inc_pop",
-      "15歳未満人口増加率" = "pct_inc_u15",
-      "15～64歳人口増加率" = "pct_inc_15to64",
+      "人口増加率"         = "pct_inc_pop", 
+      "15歳未満人口増加率" = "pct_inc_u15", 
+      "15～64歳人口増加率" = "pct_inc_15to64", 
       "65歳以上人口増加率" = "pct_inc_o65"
     )
     inc_map[input$ageCategory]
@@ -324,7 +335,7 @@ observe({
       
     } else if (input$valueType == "人口") {
       
-      breaks <- c(0, 10000, 50000, 100000, 200000, 300000, 500000, 750000, 1000000, 2000000, 3000000)
+      breaks <- c(0, 10000, 50000, 100000, 200000, 300000, 500000, 1000000, 2000000, 3000000)
       pal <- colorBin("YlOrRd", domain = df_year$val, bins = breaks)
       
     }
@@ -456,18 +467,18 @@ observe({
           clearShapes() |> 
           clearControls() |> 
           addPolygons(
-            fillColor = ~pal3(val_bin),
-            color = "white",
-            weight = 1,
-            opacity = 1,
-            fillOpacity = 0.7,
-            label = df_year$name_muni,
+            fillColor = ~pal3(val_bin), 
+            color = "white", 
+            weight = 1, 
+            opacity = 1, 
+            fillOpacity = 0.7, 
+            label = df_year$name_muni, 
             popup = popup_text
           ) |> 
           addLegend(
-            pal = pal3,
-            values = df_year$val_bin,
-            title = legend_title,
+            pal = pal3, 
+            values = df_year$val_bin, 
+            title = legend_title, 
             position = "bottomright", 
             labFormat = function(type, cuts, p) {
               cuts <- as.numeric(cuts)
@@ -487,18 +498,18 @@ observe({
           clearShapes() |> 
           clearControls() |> 
           addPolygons(
-            fillColor = ~pal2(val),
-            color = "white",
-            weight = 1,
-            opacity = 1,
-            fillOpacity = 0.7,
-            label = df_year$name_muni,
+            fillColor = ~pal2(val_bin),
+            color = "white", 
+            weight = 1, 
+            opacity = 1, 
+            fillOpacity = 0.7, 
+            label = df_year$name_muni, 
             popup = popup_text
           ) |> 
           addLegend(
             pal = pal2,
-            values = df_year$val_bin,
-            title = legend_title,
+            values = df_year$val_bin, 
+            title = legend_title, 
             position = "bottomright", 
             labFormat = function(type, cuts, p) {
               cuts <- as.numeric(cuts)
@@ -521,18 +532,18 @@ observe({
         clearShapes() |> 
         clearControls() |> 
         addPolygons(
-          fillColor = ~pal(val_bin),
-          color = "white",
-          weight = 1,
-          opacity = 1,
-          fillOpacity = 0.7,
-          label = df_year$name_muni,
+          fillColor = ~pal(val_bin), 
+          color = "white", 
+          weight = 1, 
+          opacity = 1, 
+          fillOpacity = 0.7, 
+          label = df_year$name_muni, 
           popup = popup_text
         ) |> 
         addLegend(
           pal = pal,
-          values = df_year$val,
-          title = legend_title,
+          values = df_year$val, 
+          title = legend_title, 
           position = "bottomright", 
           labFormat = function(type, cuts, p) {
             cuts <- as.numeric(cuts) / 10000
