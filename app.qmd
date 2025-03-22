@@ -1,0 +1,516 @@
+---
+title: "人口ヒートマップ"
+format: 
+  dashboard: 
+    theme: minty
+    nav-buttons: 
+      - icon: house-door-fill
+        href: https://yo5uke.com/pages/software/
+      - icon: github
+        href: https://github.com/yo5uke/population_heatmap
+      - icon: twitter-x
+        href: https://x.com/5uke_y
+lang: ja
+server: shiny
+---
+
+```{r}
+#| context: setup
+
+library(shiny)
+library(shinyWidgets)
+library(tidyverse)
+library(sf)
+library(leaflet)
+source("helpers.R")
+```
+
+# {.sidebar}
+
+```{r}
+br()
+helpText(
+  "市町村ごとの人口や年齢別人口とその割合、人口の増加率を国勢調査ベースで可視化しています。", 
+  br(), 
+  "以下のドロップダウンメニューから表示したい指標と年を選択してください。"
+)
+
+br()
+
+selectInput("valueType", "値の種類", 
+            choices = c("人口", "人口割合", "人口増加率"), 
+            selected = "人口")
+
+selectInput("ageCategory", "年齢区分", 
+            choices = c("総人口", "15歳未満人口", "15歳～64歳人口", "65歳以上人口"),
+            selected = "総人口")
+
+sliderTextInput("year", "表示する年",
+                choices = seq(1980, 2020, by = 5),
+                selected = 2020,
+                grid = TRUE)
+
+br()
+
+actionButton("show_help", "🛈 用語説明を見る")
+```
+
+# プロット
+
+```{r}
+leafletOutput("map")
+```
+
+```{r}
+#| context: server
+
+# ---- ポップアップ ----
+observeEvent(input$show_help, {
+  showModal(modalDialog(
+    title = "📝 用語説明",
+    HTML("
+      <ul style='padding-left: 20px;'>
+        <li><b>人口割合</b>：各年齢階層の人口 ÷ 当該年の総人口 × 100（%）</li>
+        <li>
+          <b>人口増加率</b>：<br>
+          （当該年の人口 − 前回調査年の人口） ÷ 前回調査年の人口 × 100（%）<br>
+          ※ 正の値：増加、負の値：減少
+        </li>
+      </ul>
+    "),
+    easyClose = TRUE,
+    footer = modalButton("閉じる"), 
+    size = "l"
+  ))
+})
+
+# ---- 値の種類 ----
+observe({
+  if (input$valueType == "人口") {
+    updateSelectInput(session, "ageCategory", 
+                      choices = c("総人口", "15歳未満人口", "15～64歳人口", "65歳以上人口"),
+                      selected = "総人口")
+  } else if (input$valueType == "人口割合") {
+    updateSelectInput(session, "ageCategory", 
+                      choices = c("15歳未満人口割合", "15～64歳人口割合", "65歳以上人口割合"),
+                      selected = "15歳未満人口割合")
+  } else if (input$valueType == "人口増加率") {
+    updateSelectInput(session, "ageCategory", 
+                      choices = c("人口増加率", "15歳未満人口増加率", "15～64歳人口増加率", "65歳以上人口増加率"),
+                      selected = "人口増加率")
+  }
+})
+
+# ---- スライダーのアップデート ----
+observe({
+  if (input$valueType == "人口増加率") {
+    updateSliderTextInput(session, "year",
+                          choices = seq(1985, 2020, 5),
+                          selected = max(1985, input$year))
+  } else {
+    # 人口増加率から他へ移った際に再度1980年を表示する
+    updateSliderTextInput(session, "year",
+                          choices = seq(1980, 2020, 5),
+                          selected = input$year)
+  }
+})
+
+# ---- タイプごとに変数を抽出 ----
+selected_col <- reactive({
+  if (input$valueType == "人口") {
+    abs_map <- c(
+      "総人口"             = "population",
+      "15歳未満人口"       = "pop_u15",
+      "15～64歳人口"       = "pop_15to64",
+      "65歳以上人口"       = "pop_o65"
+    )
+    abs_map[input$ageCategory]
+  } else if (input$valueType == "人口割合") {
+    ratio_map <- c(
+      "15歳未満人口割合" = "pct_u15",
+      "15～64歳人口割合" = "pct_15to64",
+      "65歳以上人口割合" = "pct_o65"
+    )
+    ratio_map[input$ageCategory]
+  } else if (input$valueType == "人口増加率") {
+    inc_map <- c(
+      "人口増加率"         = "pct_inc_pop",
+      "15歳未満人口増加率" = "pct_inc_u15",
+      "15～64歳人口増加率" = "pct_inc_15to64",
+      "65歳以上人口増加率" = "pct_inc_o65"
+    )
+    inc_map[input$ageCategory]
+  }
+})
+
+
+# ---- マップのプロット ----
+observe({
+  req(input$year, input$ageCategory, input$valueType)
+  
+  # ----進捗表示----
+  withProgress(message = "地図を更新中…", value = 0, {
+    
+    incProgress(0.2, detail = "該当年のデータを抽出中")
+    
+    # ---- 1. 年と変数の抽出 ----
+    if (input$valueType == "人口増加率") {
+      
+      # 該当年でフィルタリング
+      df_year <- df_gis |> 
+        filter(year == input$year)
+      
+      ## 該当年にデータがなかった場合の警告
+      if (nrow(df_year) == 0) {
+        showNotification("選択した年のデータがありません。", type = "warning")
+        return()
+      }
+      
+      incProgress(0.2, detail = "該当変数の抽出中")
+      
+      # 変数を抽出
+      col_name <- selected_col()
+      
+      if (is.na(col_name)) {
+        return()
+      }
+      
+      df_year <- df_year |> 
+        mutate(val = .data[[col_name]]) |> 
+        mutate(val_bin = pmax(pmin(val, 15), -15))
+      
+      ## 表示できるデータがなかった場合のエラーメッセージ
+      if (all(is.na(df_year$val))) {
+        showNotification("選択した年のデータには有効な値がありません。", type = "error")
+        return()
+      }
+      
+    } else if (input$valueType == "人口割合") {
+      
+      # 該当年でフィルタリング
+      df_year <- df_gis |> 
+        filter(year == input$year)
+      
+      ## 該当年にデータがなかった場合の警告
+      if (nrow(df_year) == 0) {
+        showNotification("選択した年のデータがありません。", type = "warning")
+        return()
+      }
+      
+      incProgress(0.2, detail = "該当変数の抽出中")
+      
+      # 変数を抽出
+      col_name <- selected_col()
+      
+      if (is.na(col_name)) {
+        return()
+      }
+      
+      if (col_name == "pct_u15") {
+        
+        df_year <- df_year |> 
+          mutate(val = .data[[col_name]]) |> 
+          mutate(val_bin = pmax(pmin(val, 30), 0))
+        
+      } else if (col_name == "pct_o65") {
+        
+        df_year <- df_year |> 
+          mutate(val = .data[[col_name]]) |> 
+          mutate(val_bin = pmax(pmin(val, 40), 0))
+        
+      } else {
+        
+        df_year <- df_year |> 
+          mutate(val = .data[[col_name]]) |> 
+          mutate(val_bin = pmax(pmin(val, 70), 0))
+        
+      }
+      
+    } else {
+      
+      # 該当年でフィルタリング
+      df_year <- df_gis |> 
+        filter(year == input$year)
+      
+      ## 該当年にデータがなかった場合の警告
+      if (nrow(df_year) == 0) {
+        showNotification("選択した年のデータがありません。", type = "warning")
+        return()
+      }
+      
+      incProgress(0.2, detail = "該当変数の抽出中")
+      
+      # 変数を抽出
+      col_name <- selected_col()
+      
+      if (is.na(col_name)) {
+        return()
+      }
+      
+      df_year <- df_year |> 
+        mutate(val = .data[[col_name]]) |> 
+        mutate(val_bin = pmax(pmin(val, 3000000), 0))
+      
+      ## 表示できるデータがなかった場合のエラーメッセージ
+      if (all(is.na(df_year$val))) {
+        showNotification("選択した年のデータには有効な値がありません。", type = "error")
+        return()
+      }
+      
+    }
+    
+    
+    # ---- 2. プロットのベース作成 ----
+    incProgress(0.2, detail = "カラーパレット作成中")
+    
+    ## カラーパレットの作成
+    if (input$valueType == "人口増加率") {
+      
+      breaks <- c(-20, -15, -10, -5, 0, 5, 10, 15, 20)
+      pal <- colorBin("RdYlBu", domain = df_year$val_bin, bins = breaks, reverse = TRUE)
+      
+    } else if (input$valueType == "人口割合") {
+      
+      breaks1 <- c(0, 5, 10, 15, 20, 25, 30, 35)
+      breaks2 <- c(30, 40, 50, 60, 70, 80, 90)
+      breaks3 <- c(0, 5, 10, 15, 20, 25,  30, 35, 40, 45)
+      pal1 <- colorBin("YlGnBu", domain = df_year$val_bin, bins = breaks1)
+      pal2 <- colorBin("YlGnBu", domain = df_year$val_bin, bins = breaks2)
+      pal3 <- colorBin("YlGnBu", domain = df_year$val_bin, bins = breaks3)
+      
+    } else if (input$valueType == "人口") {
+      
+      breaks <- c(0, 10000, 50000, 100000, 300000, 500000, 1000000, 2000000, 3000000)
+      pal <- colorBin("YlOrRd", domain = df_year$val, bins = breaks)
+      
+    }
+    
+    ## 凡例タイトルとpopupテキストの作成
+    legend_title <- case_when(
+      
+      input$valueType == "人口" ~ 
+        paste0(input$ageCategory, "（万人）<br>", input$year, "年"), 
+      
+      input$valueType == "人口割合" ~ 
+        paste0(input$ageCategory, "（%）<br>", input$year, "年"), 
+      
+      input$valueType == "人口増加率" ~ 
+        paste0(input$ageCategory, "（%）<br>", input$year, "年")
+      
+    )
+    
+    popup_text <- case_when(
+      
+      input$valueType == "人口" ~ 
+        if_else(
+          is.na(df_year$val), 
+          paste0(df_year$name_muni, "<br>", input$year, "年国勢調査", 
+               "<br>", "データが欠損しています。"), 
+          paste0(df_year$name_muni, "<br>", input$year, "年国勢調査", 
+               "<br>", df_year$val, "人")
+        ), 
+      
+      input$valueType == "人口割合" ~ 
+        if_else(
+          is.na(df_year$val), 
+          paste0(df_year$name_muni, "<br>", input$year, "年国勢調査", 
+                 "<br>割合：", "データが欠損しています。"), 
+          paste0(df_year$name_muni, "<br>", input$year, "年国勢調査", 
+                 "<br>割合：", df_year$val, "%")
+        ), 
+      
+      input$valueType == "人口増加率" ~ 
+        if_else(
+          is.na(df_year$val), 
+          paste0(df_year$name_muni, "<br>", input$year, "年国勢調査", 
+                 "<br>前回国勢調査比：", "データが欠損しています。"), 
+          if_else(
+            df_year$val >= 0, 
+            paste0(df_year$name_muni, "<br>", input$year, "年国勢調査", 
+                   "<br>前回国勢調査比：+", df_year$val, "%"), 
+            paste0(df_year$name_muni, "<br>", input$year, "年国勢調査", 
+                   "<br>前回国勢調査比：", df_year$val, "%")
+          )
+        )
+      
+    )
+    
+    
+    # ---- 3. 地図の更新 ----
+    incProgress(0.2, detail = "地図更新中")
+    
+    if (input$valueType == "人口増加率") {
+      
+      leafletProxy("map", data = df_year) |> 
+        clearShapes() |> 
+        clearControls() |> 
+        addPolygons(
+          fillColor = ~pal(val_bin),
+          color = "white",
+          weight = 1,
+          opacity = 1,
+          fillOpacity = 0.7,
+          label = df_year$name_muni,
+          popup = popup_text
+        ) |> 
+        addLegend(
+          pal = pal,
+          values = df_year$val_bin,
+          title = legend_title,
+          position = "bottomright", 
+          labFormat = function(type, cuts, p) {
+            cuts <- as.numeric(cuts)
+            n <- length(cuts)
+            labels <- vector("character", n - 1)
+            labels[1] <- paste0(cuts[2], "%以下")
+            if (n > 3) {
+              for (i in 2:(n - 2)) {
+                labels[i] <- paste0(cuts[i], " ～ ", cuts[i + 1], "%")
+              }
+            }
+            labels[n - 1] <- paste0(cuts[n - 1], "%以上")
+            return(labels)
+          }
+        )
+      
+    } else if (input$valueType == "人口割合") {
+      
+      if (col_name == "pct_u15") {
+        
+        leafletProxy("map", data = df_year) |> 
+          clearShapes() |> 
+          clearControls() |> 
+          addPolygons(
+            fillColor = ~pal1(val_bin),
+            color = "white",
+            weight = 1,
+            opacity = 1,
+            fillOpacity = 0.7,
+            label = df_year$name_muni,
+            popup = popup_text
+          ) |> 
+          addLegend(
+            pal = pal1,
+            values = df_year$val_bin,
+            title = legend_title,
+            position = "bottomright", 
+            labFormat = function(type, cuts, p) {
+              cuts <- as.numeric(cuts)
+              n <- length(cuts)
+              labels <- vector("character", n - 1)
+              for (i in 1:(n - 2)) {
+                labels[i] <- paste0(cuts[i], " ～ ", cuts[i + 1], "%")
+              }
+              labels[n - 1] <- paste0(cuts[n - 1], "%以上")
+              return(labels)
+            }
+          )
+        
+      } else if (col_name == "pct_o65") {
+        
+        leafletProxy("map", data = df_year) |> 
+          clearShapes() |> 
+          clearControls() |> 
+          addPolygons(
+            fillColor = ~pal3(val_bin),
+            color = "white",
+            weight = 1,
+            opacity = 1,
+            fillOpacity = 0.7,
+            label = df_year$name_muni,
+            popup = popup_text
+          ) |> 
+          addLegend(
+            pal = pal3,
+            values = df_year$val_bin,
+            title = legend_title,
+            position = "bottomright", 
+            labFormat = function(type, cuts, p) {
+              cuts <- as.numeric(cuts)
+              n <- length(cuts)
+              labels <- vector("character", n - 1)
+              for (i in 1:(n - 2)) {
+                labels[i] <- paste0(cuts[i], " ～ ", cuts[i + 1], "%")
+              }
+              labels[n - 1] <- paste0(cuts[n - 1], "%以上")
+              return(labels)
+            }
+          )
+        
+      } else {
+        
+        leafletProxy("map", data = df_year) |> 
+          clearShapes() |> 
+          clearControls() |> 
+          addPolygons(
+            fillColor = ~pal2(val),
+            color = "white",
+            weight = 1,
+            opacity = 1,
+            fillOpacity = 0.7,
+            label = df_year$name_muni,
+            popup = popup_text
+          ) |> 
+          addLegend(
+            pal = pal2,
+            values = df_year$val_bin,
+            title = legend_title,
+            position = "bottomright", 
+            labFormat = function(type, cuts, p) {
+              cuts <- as.numeric(cuts)
+              n <- length(cuts)
+              labels <- vector("character", n - 1)
+              labels[1] <- paste0(cuts[2], "%以下")
+              for (i in 2:(n - 2)) {
+                labels[i] <- paste0(cuts[i], " ～ ", cuts[i + 1], "%")
+              }
+              labels[n - 1] <- paste0(cuts[n - 1], "%以上")
+              return(labels)
+            }
+          )
+        
+      }
+      
+    } else {
+      
+      leafletProxy("map", data = df_year) |> 
+        clearShapes() |> 
+        clearControls() |> 
+        addPolygons(
+          fillColor = ~pal(val_bin),
+          color = "white",
+          weight = 1,
+          opacity = 1,
+          fillOpacity = 0.7,
+          label = df_year$name_muni,
+          popup = popup_text
+        ) |> 
+        addLegend(
+          pal = pal,
+          values = df_year$val,
+          title = legend_title,
+          position = "bottomright", 
+          labFormat = function(type, cuts, p) {
+            cuts <- as.numeric(cuts) / 10000
+            n <- length(cuts)
+            labels <- vector("character", n - 1)
+            for (i in 1:(n - 2)) {
+              labels[i] <- paste0(cuts[i], " ～ ", cuts[i + 1], "万人")
+            }
+            labels[n - 1] <- paste0(cuts[n - 1], "万人以上")
+            return(labels)
+          }
+        )
+      
+    }
+    
+    incProgress(1.0, detail = "まもなく表示されます")
+  })
+})
+
+output$map <- renderLeaflet({
+  leaflet() |> 
+    addTiles() |> 
+    setView(lng = 138.36834, lat = 38.01827, zoom = 6)
+})
+```
