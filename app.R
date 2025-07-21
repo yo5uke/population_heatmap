@@ -7,7 +7,6 @@ library(leaflet)
 
 source("helpers.R")
 
-# 1. ヘッダー部分のレイアウト調整
 custom_header <- dashboardHeader(
   title = tags$div(
     style = "display: flex; align-items: center; justify-content: space-between; width: 100%;",
@@ -43,14 +42,11 @@ ui <- dashboardPage(
       }
       .skin-green .main-header .navbar .sidebar-toggle { color: #fff !important; }
       .skin-green .main-header .navbar .sidebar-toggle:hover { background: rgba(255,255,255,0.08) !important; }
-  
-      /* 設定boxタイトルバー */
       .box.box-solid.box-success > .box-header {
         color: #fff !important;
         background: #78c2ad !important;
         background-color: #78c2ad !important;
       }
-      /* 設定boxの枠もminty色に */
       .box.box-solid.box-success {
         border: 1px solid #78c2ad !important;
       }
@@ -76,8 +72,8 @@ ui <- dashboardPage(
                           choices = c("総人口", "15歳未満人口", "15歳～64歳人口", "65歳以上人口"),
                           selected = "総人口"),
               sliderTextInput("year", "表示する年",
-                              choices = names(map_data_list),
-                              selected = max(names(map_data_list)),
+                              choices = as.character(year_list),
+                              selected = as.character(max(year_list)),
                               grid = TRUE),
               tags$div(
                 style = "margin-top:18px; display: flex; gap:12px; justify-content: flex-start;",
@@ -155,39 +151,33 @@ ui <- dashboardPage(
   )
 )
 
-# ---- サーバーロジック ----
 server <- function(input, output, session) {
-  # 動的UI
+  
   observe({
     if (input$valueType == "人口") {
       updateSelectInput(session, "ageCategory",
                         choices = c("総人口", "15歳未満人口", "15～64歳人口", "65歳以上人口"),
-                        selected = "総人口"
-      )
+                        selected = "総人口")
     } else if (input$valueType == "人口割合") {
       updateSelectInput(session, "ageCategory",
                         choices = c("15歳未満人口割合", "15～64歳人口割合", "65歳以上人口割合"),
-                        selected = "15歳未満人口割合"
-      )
+                        selected = "15歳未満人口割合")
     } else if (input$valueType == "人口増加率") {
       updateSelectInput(session, "ageCategory",
                         choices = c("人口増加率", "15歳未満人口増加率", "15～64歳人口増加率", "65歳以上人口増加率"),
-                        selected = "人口増加率"
-      )
+                        selected = "人口増加率")
     }
   })
   
   observeEvent(input$valueType, {
     if (input$valueType == "人口増加率") {
       updateSliderTextInput(session, "year",
-                            choices = names(map_data_list)[-1],
-                            selected = tail(names(map_data_list), 1)
-      )
+                            choices = as.character(year_list[-1]),
+                            selected = as.character(tail(year_list, 1)))
     } else {
       updateSliderTextInput(session, "year",
-                            choices = names(map_data_list),
-                            selected = tail(names(map_data_list), 1)
-      )
+                            choices = as.character(year_list),
+                            selected = as.character(tail(year_list, 1)))
     }
   })
   
@@ -213,9 +203,10 @@ server <- function(input, output, session) {
     )
   })
   
+  # ======== メイン地図データ生成（geometry共通化型） ========
   filtered_gis <- reactive({
     req(input$year, selected_col())
-    dat <- map_data_list[[as.character(input$year)]]
+    dat <- get_map_sf(as.integer(input$year))
     col <- selected_col()
     dat$val <- dat[[col]]
     if (input$valueType == "人口") {
