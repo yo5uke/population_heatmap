@@ -241,7 +241,7 @@ server <- function(input, output, session) {
     } else if (input$valueType == "人口割合") {
       pal <- colorBin("YlGnBu", domain = dat$val_bin, bins = pretty(dat$val_bin, 8))
     } else {
-      breaks <- c(0, 10000, 50000, 100000, 200000, 300000, 500000, 1000000, 2000000, 3000000)
+      breaks <- c(0, 10000, 50000, 100000, 200000, 300000, 500000, 1000000, 2000000, 4000000)
       pal <- colorBin("YlOrRd", domain = dat$val_bin, bins = breaks)
     }
     
@@ -290,6 +290,7 @@ server <- function(input, output, session) {
       addLegend(
         pal = pal,
         values = dat$val_bin,
+        na.label = "データなし",
         title = legend_title,
         position = "bottomright"
       )
